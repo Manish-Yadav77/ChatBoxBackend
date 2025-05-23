@@ -5,11 +5,13 @@ const mongoose = require("mongoose");
 const messageSchema = new mongoose.Schema(
   {
     senderVirtualNumber: { type: String, required: true },
-    message: { type: String, required: true },
+    encryptedMessage: { type: String, required: true },
+    iv: { type: String, required: true },
     timestamp: { type: Date, default: Date.now }
   },
   { _id: false }
 );
+
 
 // Main schema for the conversation thread
 const chatMessageSchema = new mongoose.Schema(

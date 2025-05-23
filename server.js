@@ -11,6 +11,9 @@ import authenticateToken from "./middleware/auth.js";
 import User from "./Models/UserModel.js";
 import Call from "./Models/Call.js";
 import ChatMessage from "./Models/ChatMessage.js";
+import { encrypt } from "./utils/encryption.js";
+import { decrypt } from "./utils/encryption.js";
+
 
 // Initialize
 dotenv.config();
@@ -170,10 +173,13 @@ app.post("/send", async (req, res) => {
     return res.status(400).json({ message: "Missing required fields" });
   }
 
-  const participants = [senderVirtualNumber, receiverVirtualNumber].sort(); // Ensure consistent order
+  const { encryptedData, iv } = encrypt(message);
+  const participants = [senderVirtualNumber, receiverVirtualNumber].sort();
+
   const newMessage = {
     senderVirtualNumber,
-    message,
+    encryptedMessage: encryptedData,
+    iv,
     timestamp: new Date()
   };
 
@@ -181,13 +187,8 @@ app.post("/send", async (req, res) => {
     let chat = await ChatMessage.findOne({ participants });
 
     if (!chat) {
-      // Create a new chat thread
-      chat = new ChatMessage({
-        participants,
-        messages: [newMessage]
-      });
+      chat = new ChatMessage({ participants, messages: [newMessage] });
     } else {
-      // Append to existing messages
       chat.messages.push(newMessage);
     }
 
@@ -203,16 +204,21 @@ app.post("/send", async (req, res) => {
 // Get chat thread between two virtual numbers
 app.get("/chats/:sender/:receiver", async (req, res) => {
   const { sender, receiver } = req.params;
-  const participants = [sender, receiver].sort(); // Ensure consistent ordering
+  const participants = [sender, receiver].sort();
 
   try {
     const chat = await ChatMessage.findOne({ participants });
-
     if (!chat) {
-      return res.status(404).json({ message: "No chat found between these numbers" });
+      return res.status(404).json({ message: "No chat found" });
     }
 
-    res.json({ chat });
+    const decryptedMessages = chat.messages.map(msg => ({
+      senderVirtualNumber: msg.senderVirtualNumber,
+      message: decrypt(msg.encryptedMessage, msg.iv),
+      timestamp: msg.timestamp
+    }));
+
+    res.json({ chat: { ...chat.toObject(), messages: decryptedMessages } });
   } catch (error) {
     console.error("Error fetching chat thread:", error);
     res.status(500).json({ message: "Server error" });
