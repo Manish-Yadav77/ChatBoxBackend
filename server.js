@@ -20,7 +20,7 @@ connectDB();
 // Middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://tasks-managerr.netlify.app"],
+    origin: ["http://localhost:5173", "https://chatbox3.netlify.app"],
     credentials: true,
   })
 );
