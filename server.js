@@ -3,6 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import http from "http";
+import { Server } from "socket.io";
 
 import connectDB from "./database.js";
 import sendMail from "./config/nodemailerConfig.js";
@@ -14,11 +16,19 @@ import ChatMessage from "./Models/ChatMessage.js";
 import { encrypt } from "./utils/encryption.js";
 import { decrypt } from "./utils/encryption.js";
 
-
 // Initialize
 dotenv.config();
 const app = express();
 connectDB();
+
+// Create HTTP server for Socket.IO
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: ["http://localhost:5173", "https://chatbox3.netlify.app"],
+    credentials: true,
+  },
+});
 
 // Middleware
 app.use(
@@ -233,7 +243,7 @@ app.get("/chats/user/:phoneNumber", async (req, res) => {
   try {
     const chats = await ChatMessage.find({
       participants: phoneNumber
-    }).sort({ updatedAt: -1 }); // most recent chats first
+    }).sort({ updatedAt: -1 });
 
     res.json({ chats });
   } catch (error) {
@@ -405,9 +415,59 @@ app.get("/users", authenticateToken, async (req, res) => {
 
 
 
+// ================== SOCKET.IO FOR REAL-TIME CHAT ================== //
+
+io.on("connection", (socket) => {
+  console.log("🟢 User connected:", socket.id);
+
+  socket.on("join", (virtualNumber) => {
+    socket.join(virtualNumber);
+    console.log(`👤 Joined room: ${virtualNumber}`);
+  });
+
+  socket.on("sendMessage", async ({ senderVirtualNumber, receiverVirtualNumber, message }) => {
+    try {
+      const { encryptedData, iv } = encrypt(message);
+      const participants = [senderVirtualNumber, receiverVirtualNumber].sort();
+
+      const newMessage = {
+        senderVirtualNumber,
+        encryptedMessage: encryptedData,
+        iv,
+        timestamp: new Date()
+      };
+
+      let chat = await ChatMessage.findOne({ participants });
+      if (!chat) {
+        chat = new ChatMessage({ participants, messages: [newMessage] });
+      } else {
+        chat.messages.push(newMessage);
+      }
+      await chat.save();
+
+      // Emit decrypted message to both sender and receiver
+      const decrypted = decrypt(encryptedData, iv);
+      const payload = {
+        senderVirtualNumber,
+        message: decrypted,
+        timestamp: newMessage.timestamp
+      };
+
+      io.to(receiverVirtualNumber).emit("receiveMessage", payload);
+      io.to(senderVirtualNumber).emit("messageDelivered", payload);
+    } catch (err) {
+      console.error("❌ Error sending message:", err);
+    }
+  });
+
+  socket.on("disconnect", () => {
+    console.log("🔴 User disconnected:", socket.id);
+  });
+});
+
 // ================== START SERVER ================== //
 
-const PORT = process.env.PORT;
-app.listen(PORT, () => {
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
   console.log(`🚀 Server is running on http://localhost:${PORT}`);
 });
