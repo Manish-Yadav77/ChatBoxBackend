@@ -1,7 +1,5 @@
-// models/ChatMessage.js
 const mongoose = require("mongoose");
 
-// Sub-schema for individual messages
 const messageSchema = new mongoose.Schema(
   {
     senderVirtualNumber: { type: String, required: true },
@@ -12,10 +10,9 @@ const messageSchema = new mongoose.Schema(
   { _id: false }
 );
 
-
-// Main schema for the conversation thread
 const chatMessageSchema = new mongoose.Schema(
   {
+    chatId: { type: String, unique: true, required: true },
     participants: {
       type: [String],
       required: true,
@@ -37,7 +34,7 @@ const chatMessageSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Ensure only one document per participant pair
-chatMessageSchema.index({ participants: 1 }, { unique: true });
+// ✅ Only index on chatId, NOT participants
+chatMessageSchema.index({ chatId: 1 }, { unique: true });
 
 module.exports = mongoose.model("ChatMessage", chatMessageSchema);

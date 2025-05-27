@@ -43,7 +43,6 @@ app.use(express.json());
 const generate11DigitNumber = () =>
   Math.floor(10000000000 + Math.random() * 90000000000).toString();
 
-
 // ================== AUTH ROUTES ================== //
 
 // Register
@@ -133,7 +132,6 @@ app.delete("/user/delete", authenticateToken, async (req, res) => {
   }
 });
 
-
 // ================== CALL ROUTES ================== //
 
 // Save a call record
@@ -165,7 +163,6 @@ app.get("/calls/:phoneNumber", async (req, res) => {
   }
 });
 
-
 // ================== CHAT ROUTES ================== //
 
 // Check user by virtual number
@@ -175,6 +172,11 @@ app.get("/users/exists/:virtualNumber", async (req, res) => {
   res.json({ exists: !!user });
 });
 
+// Helper: Generate chatId
+function getChatId(senderVirtualNumber, receiverVirtualNumber) {
+  return [senderVirtualNumber, receiverVirtualNumber].sort().join("_");
+}
+
 // POST /send — Save a message to the chat thread
 app.post("/send", async (req, res) => {
   const { senderVirtualNumber, receiverVirtualNumber, message } = req.body;
@@ -183,7 +185,8 @@ app.post("/send", async (req, res) => {
     return res.status(400).json({ message: "Missing required fields" });
   }
 
-  const { encryptedData, iv } = encrypt(message);
+  const { encryptedData, iv } = encrypt(message); // your encryption util
+  const chatId = getChatId(senderVirtualNumber, receiverVirtualNumber);
   const participants = [senderVirtualNumber, receiverVirtualNumber].sort();
 
   const newMessage = {
@@ -194,10 +197,14 @@ app.post("/send", async (req, res) => {
   };
 
   try {
-    let chat = await ChatMessage.findOne({ participants });
+    let chat = await ChatMessage.findOne({ chatId });
 
     if (!chat) {
-      chat = new ChatMessage({ participants, messages: [newMessage] });
+      chat = new ChatMessage({
+        chatId,
+        participants,
+        messages: [newMessage],
+      });
     } else {
       chat.messages.push(newMessage);
     }
@@ -214,10 +221,10 @@ app.post("/send", async (req, res) => {
 // Get chat thread between two virtual numbers
 app.get("/chats/:sender/:receiver", async (req, res) => {
   const { sender, receiver } = req.params;
-  const participants = [sender, receiver].sort();
+  const chatId = getChatId(sender, receiver);
 
   try {
-    const chat = await ChatMessage.findOne({ participants });
+    const chat = await ChatMessage.findOne({ chatId });
     if (!chat) {
       return res.status(404).json({ message: "No chat found" });
     }
@@ -235,7 +242,6 @@ app.get("/chats/:sender/:receiver", async (req, res) => {
   }
 });
 
-
 // Get all chat threads for a user (either as sender or receiver)
 app.get("/chats/user/:phoneNumber", async (req, res) => {
   const { phoneNumber } = req.params;
@@ -251,7 +257,6 @@ app.get("/chats/user/:phoneNumber", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
 
 // get chat history but only the number and name
 app.get('/users/chats', async (req, res) => {
@@ -270,8 +275,6 @@ app.get('/users/chats', async (req, res) => {
 
       let name = null;
 
-      // Since savedNames is a Map<String, String> like { "32028736061": "Testing" },
-      // it means currentUser has saved a name for otherNumber under THEIR OWN number
       if (
         chat.savedNames &&
         typeof chat.savedNames === 'object' &&
@@ -290,184 +293,72 @@ app.get('/users/chats', async (req, res) => {
 
     res.json(userList);
   } catch (err) {
-    console.error('Error fetching chat users:', err);
-    res.status(500).json({ error: 'Backend server error while getting chat users' });
+    console.error('Error fetching user chats:', err);
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
-// update or save the name for every user...
-app.post('/users/save-name', async (req, res) => {
-  const { currentUser, targetNumber, name } = req.body;
-
-  if (!currentUser || !targetNumber || !name) {
-    return res.status(400).json({ error: 'Missing fields in request' });
-  }
-
-  try {
-    const chat = await ChatMessage.findOneAndUpdate(
-      {
-        participants: { $all: [currentUser, targetNumber] }
-      },
-      {
-        $set: { [`savedNames.${currentUser}`]: name }
-      },
-      { new: true }
-    );
-
-    if (!chat) {
-      return res.status(404).json({ error: 'Chat not found between the users' });
-    }
-
-    res.status(200).json({ message: 'Name saved successfully.', chat });
-  } catch (err) {
-    console.error('Error saving name:', err);
-    res.status(500).json({ error: 'Failed to save name' });
-  }
-});
-
-// ================== KYC ROUTES ================== //
-
-// In-memory OTP store
-const otpStore = new Map();
-
-// Send OTP
-app.post("/send-otp", async (req, res) => {
-  const { email, phone } = req.body;
-
-  if (!email || !phone || phone.length !== 10) {
-    return res.status(400).json({ message: "Invalid email or phone" });
-  }
-
-  const user = await User.findOne({ email, phone });
-  if (!user) {
-    return res.status(400).json({ message: "Email and phone do not match any user" });
-  }
-
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore.set(email, otp);
-
-  const subject = "Your OTP for KYC Verification";
-  const text = `Your OTP is ${otp}. It is valid for 10 minutes.`;
-  const html = `<p>Your OTP is <b>${otp}</b>. It is valid for 10 minutes.</p>`;
-
-  try {
-    await sendMail(email, subject, text, html);
-    res.json({ message: "OTP sent" });
-  } catch (error) {
-    console.error("Failed to send OTP email:", error);
-    res.status(500).json({ message: "Failed to send OTP" });
-  }
-});
-
-// Verify OTP
-app.post("/verify-otp", async (req, res) => {
-  const { email, otp } = req.body;
-
-  if (!email || !otp) {
-    return res.status(400).json({ message: "Email and OTP are required" });
-  }
-
-  const savedOtp = otpStore.get(email);
-  if (!savedOtp || savedOtp !== otp) {
-    return res.status(400).json({ message: "Invalid or expired OTP" });
-  }
-
-  try {
-    otpStore.delete(email);
-    const updatedUser = await User.findOneAndUpdate({ email }, { kycVerified: true }, { new: true });
-
-    if (!updatedUser) return res.status(404).json({ message: "User not found" });
-
-    res.json({ verified: true, message: "KYC Verified Successfully" });
-  } catch (error) {
-    console.error("Error updating KYC status:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-
-// ================== Personal or All data API ================== //
-
-// Get logged-in user's data
-app.get("/me", authenticateToken, async (req, res) => {
-  try {    
-    const user = await User.findById(req.user.userId).select("-password");
-    if (!user) return res.status(404).json({ message: "User not found" });
-    res.status(200).json(user);
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-// Get all users (Admin access only)
-app.get("/users", authenticateToken, async (req, res) => {
-  if (req.user.role !== "Admin")
-    return res.status(403).json({ message: "Access denied" });
-  try {
-    const users = await User.find().select("-password");
-    res.status(200).json(users);
-  } catch (error) {
-    console.error("Get users error:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-
-
-
-
-// ================== SOCKET.IO FOR REAL-TIME CHAT ================== //
-
+// =============== SOCKET.IO ==================== //
 io.on("connection", (socket) => {
-  console.log("🟢 User connected:", socket.id);
+  console.log("A user connected", socket.id);
 
-  socket.on("join", (virtualNumber) => {
-    socket.join(virtualNumber);
-    console.log(`👤 Joined room: ${virtualNumber}`);
+  socket.on("join-room", (roomId) => {
+    socket.join(roomId);
+    console.log(`Socket ${socket.id} joined room ${roomId}`);
   });
 
-  socket.on("sendMessage", async ({ senderVirtualNumber, receiverVirtualNumber, message }) => {
-    try {
-      const { encryptedData, iv } = encrypt(message);
-      const participants = [senderVirtualNumber, receiverVirtualNumber].sort();
+  socket.on("send-message", async (data) => {
+    const { senderVirtualNumber, receiverVirtualNumber, message } = data;
 
-      const newMessage = {
+    if (!senderVirtualNumber || !receiverVirtualNumber || !message) {
+      return;
+    }
+
+    // Encrypt message before saving
+    const { encryptedData, iv } = encrypt(message);
+
+    const chatId = getChatId(senderVirtualNumber, receiverVirtualNumber);
+
+    try {
+      let chat = await ChatMessage.findOne({ chatId });
+
+      const newMsg = {
         senderVirtualNumber,
         encryptedMessage: encryptedData,
         iv,
         timestamp: new Date()
       };
 
-      let chat = await ChatMessage.findOne({ participants });
       if (!chat) {
-        chat = new ChatMessage({ participants, messages: [newMessage] });
+        chat = new ChatMessage({
+          chatId,
+          participants: [senderVirtualNumber, receiverVirtualNumber].sort(),
+          messages: [newMsg],
+        });
       } else {
-        chat.messages.push(newMessage);
+        chat.messages.push(newMsg);
       }
+
       await chat.save();
 
-      // Emit decrypted message to both sender and receiver
-      const decrypted = decrypt(encryptedData, iv);
-      const payload = {
+      // Broadcast decrypted message to the room (both participants)
+      io.to(chatId).emit("receive-message", {
         senderVirtualNumber,
-        message: decrypted,
-        timestamp: newMessage.timestamp
-      };
-
-      io.to(receiverVirtualNumber).emit("receiveMessage", payload);
-      io.to(senderVirtualNumber).emit("messageDelivered", payload);
+        message,
+        timestamp: newMsg.timestamp,
+      });
     } catch (err) {
-      console.error("❌ Error sending message:", err);
+      console.error("Socket save message error:", err);
     }
   });
 
   socket.on("disconnect", () => {
-    console.log("🔴 User disconnected:", socket.id);
+    console.log("User disconnected", socket.id);
   });
 });
 
-// ================== START SERVER ================== //
-
-const PORT = process.env.PORT || 5000;
+// =============== SERVER START ================== //
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server is running on http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
