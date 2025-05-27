@@ -298,6 +298,34 @@ app.get('/users/chats', async (req, res) => {
   }
 });
 
+
+// ================== Personal or All data API ================== //
+
+// Get logged-in user's data
+app.get("/me", authenticateToken, async (req, res) => {
+  try {    
+    const user = await User.findById(req.user.userId).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.status(200).json(user);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// Get all users (Admin access only)
+app.get("/users", authenticateToken, async (req, res) => {
+  if (req.user.role !== "Admin")
+    return res.status(403).json({ message: "Access denied" });
+  try {
+    const users = await User.find().select("-password");
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Get users error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 // =============== SOCKET.IO ==================== //
 io.on("connection", (socket) => {
   console.log("A user connected", socket.id);
